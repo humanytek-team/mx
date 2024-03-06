@@ -48,6 +48,12 @@ class CFDIImporter(models.TransientModel):
         # TODO domain
         # TODO default
     )
+    account_id = fields.Many2one(
+        comodel_name="account.account",
+        required=True,
+        # TODO domain
+        # TODO default
+    )
 
     def improve_cfdi(self, cfdi):
         cfdi["@UUID"] = cfdi["Complemento"]["TimbreFiscalDigital"]["@UUID"]
@@ -88,7 +94,6 @@ class CFDIImporter(models.TransientModel):
         return cfdi
 
     def get_move(self, uuid: str):
-        return None  # TODO
         return self.env["account.move"].search(
             [("l10n_mx_edi_cfdi_uuid", "=", uuid)], limit=1
         )
@@ -132,9 +137,10 @@ class CFDIImporter(models.TransientModel):
         for traslado in (
             concepto.get("Impuestos", {}).get("Traslados", {}).get("Traslado", [])
         ):
+            amount = float(traslado["@TasaOCuota"]) * 100
             tax = self.env["account.tax"].search(
                 [
-                    ("amount", "=", float(traslado["@TasaOCuota"])),
+                    ("amount", "=", amount),
                     ("type_tax_use", "=", "sale" if cfdi["issued"] else "purchase"),
                     ("company_id", "parent_of", self.company_id.id),
                     ("country_id", "=", self.env.ref("base.mx").id),
@@ -167,6 +173,7 @@ class CFDIImporter(models.TransientModel):
                         "price_unit": concepto["@ValorUnitario"],
                         "discount": concepto.get("@Descuento", 0),
                         "tax_ids": [(6, 0, taxes.ids)],
+                        "account_id": self.account_id.id,
                     },
                 )
             )
@@ -246,19 +253,9 @@ class CFDIImporter(models.TransientModel):
 # {e}
 {trace}
 """
-        # If errors, show them in the same wizard
-        if self.errors:
-            return {
-                "type": "ir.actions.act_window",
-                "res_model": "cfdi_importer",
-                "view_mode": "form",
-                "view_id": self.env.ref("cfdi_import.cfdi_importer_wizard").id,
-                "target": "new",
-                "res_id": self.id,
-            }
-        # If no errors, close the wizard
-
-        return {  # TODO remove
+            else:
+                attachment.unlink()
+        return {
             "type": "ir.actions.act_window",
             "res_model": "cfdi_importer",
             "view_mode": "form",
@@ -266,4 +263,3 @@ class CFDIImporter(models.TransientModel):
             "target": "new",
             "res_id": self.id,
         }
-        # return {"type": "ir.actions.act_window_close"}
