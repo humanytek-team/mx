@@ -6,8 +6,12 @@
         <field name="arch" type="xml">
             <form>
                 <group>
-                    <field name="file_name" invisible="1"/>
-                    <field name="file" filename="file_name"/>
+                    <field name="xml_ids" widget="many2many_binary"
+                        class="g-col-8"/>
+                </group>
+                <!-- Show error messages here -->
+                <group invisible="not errors">
+                    <field name="errors" class="g-col-8"/>
                 </group>
                 <footer>
                     <button string="Import" type="object" name="action_import_cfdis"
