@@ -198,7 +198,6 @@ class CFDIImporter(models.TransientModel):
             {
                 "journal_id": self.journal_id.id,
                 "company_id": self.company_id.id,
-                "l10n_mx_edi_cfdi_attachment_id": attachment.id,
                 "partner_id": partner.id,
                 "move_type": "in_invoice" if cfdi["issued"] else "out_invoice",
                 "invoice_date": cfdi["@Fecha"],
@@ -210,6 +209,21 @@ class CFDIImporter(models.TransientModel):
                 "currency_id": currency.id,
             }
         )
+
+        document = move._l10n_mx_edi_cfdi_invoice_document_sent(
+            attachment.name, xml.encode("utf-8")
+        )
+        move.with_context(no_new_invoice=True).message_post(
+            body=_(
+                "The CFDI document was successfully created and signed by the government."
+            ),
+            attachment_ids=document.attachment_id.ids,
+        )
+        documents = move.l10n_mx_edi_invoice_document_ids
+        self.env["l10n_mx_edi.document"]._fetch_and_update_sat_status(
+            extra_domain=[("id", "in", documents.ids)]
+        )
+        move.action_post()
         return move
 
     def action_import_cfdis(self):
@@ -221,6 +235,12 @@ class CFDIImporter(models.TransientModel):
                 self.move_ids += self.import_xml(xml)
             except Exception as e:
                 trace = traceback.format_exc()
+                _logger.error(
+                    "Error importing %s: %s\n%s",
+                    attachment.name,
+                    e,
+                    trace,
+                )
                 self.errors += f"""\
 # Error importing {attachment.name}:
 # {e}
