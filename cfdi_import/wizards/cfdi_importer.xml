@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <record id="cfdi_importer_wizard" model="ir.ui.view">
+        <field name="name">cfdi_importer_wizard</field>
+        <field name="model">cfdi_importer</field>
+        <field name="arch" type="xml">
+            <form>
+                <group>
+                    <field name="file_name" invisible="1"/>
+                    <field name="file" filename="file_name"/>
+                </group>
+                <footer>
+                    <button string="Import" type="object" name="action_import_cfdis"
+                        class="oe_highlight"/>
+                    <button string="Cancel" class="oe_link" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_cfdi_importer" model="ir.actions.act_window">
+        <field name="name">Import CFDIs</field>
+        <field name="res_model">cfdi_importer</field>
+        <field name="view_mode">form</field>
+        <field name="view_id" ref="cfdi_importer_wizard"/>
+        <field name="target">new</field>
+    </record>
+
+    <menuitem id="menu_cfdi_importer" name="Import CFDIs"
+        parent="account.menu_finance_entries"
+        action="action_cfdi_importer"
+        groups="base.group_no_one"
+        sequence="100"/>
+</odoo>
