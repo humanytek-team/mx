@@ -15,4 +15,10 @@
         # wizards
         "wizards/cfdi_importer.xml",
     ],
+    "external_dependencies": {
+        "python": [
+            "xmltodict",  # 0.13.0
+        ],
+    },
+    "application": True,
 }
