@@ -133,7 +133,6 @@ class CFDIImporter(models.TransientModel):
 
     def get_taxes(self, cfdi, concepto):
         taxes = self.env["account.tax"].browse()
-        concepto["Impuestos"]["Traslados"]["Traslado"]
         for traslado in (
             concepto.get("Impuestos", {}).get("Traslados", {}).get("Traslado", [])
         ):
