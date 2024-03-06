@@ -88,6 +88,7 @@ class CFDIImporter(models.TransientModel):
         return cfdi
 
     def get_move(self, uuid: str):
+        return None  # TODO
         return self.env["account.move"].search(
             [("l10n_mx_edi_cfdi_uuid", "=", uuid)], limit=1
         )
@@ -103,10 +104,13 @@ class CFDIImporter(models.TransientModel):
         move = self.get_or_create_move(cfdi, xml)
         return move
 
-    def get_or_create_partner(self, cfdi):
-        partner = self.env["res.partner"].search(
+    def get_partner(self, cfdi):
+        return self.env["res.partner"].search(
             [("vat", "=", cfdi["other"]["@Rfc"])], limit=1
         )
+
+    def get_or_create_partner(self, cfdi):
+        partner = self.get_partner(cfdi)
         if not partner:
             partner = self.create_partner(cfdi)
         return partner
@@ -122,8 +126,55 @@ class CFDIImporter(models.TransientModel):
         )
         return partner
 
+    def get_taxes(self, cfdi, concepto):
+        taxes = self.env["account.tax"].browse()
+        concepto["Impuestos"]["Traslados"]["Traslado"]
+        for traslado in (
+            concepto.get("Impuestos", {}).get("Traslados", {}).get("Traslado", [])
+        ):
+            tax = self.env["account.tax"].search(
+                [
+                    ("amount", "=", float(traslado["@TasaOCuota"])),
+                    ("type_tax_use", "=", "sale" if cfdi["issued"] else "purchase"),
+                    ("company_id", "parent_of", self.company_id.id),
+                    ("country_id", "=", self.env.ref("base.mx").id),
+                ]
+            )
+            if not tax:
+                raise ValueError(
+                    _("The tax %s is not available") % traslado["@TasaOCuota"]
+                )
+            if len(tax) > 1:
+                _logger.warning(
+                    "Multiple taxes found for %s, using the first one",
+                    traslado["@TasaOCuota"],
+                )
+                tax = tax[0]
+            taxes |= tax
+        return taxes
+
+    def create_lines(self, cfdi):
+        lines = []
+        for concepto in cfdi["Conceptos"]["Concepto"]:
+            taxes = self.get_taxes(cfdi, concepto)
+            lines.append(
+                (
+                    0,
+                    0,
+                    {
+                        "name": concepto["@Descripcion"],
+                        "quantity": concepto["@Cantidad"],
+                        "price_unit": concepto["@ValorUnitario"],
+                        "discount": concepto.get("@Descuento", 0),
+                        "tax_ids": [(6, 0, taxes.ids)],
+                    },
+                )
+            )
+        return lines
+
     def create_move(self, cfdi, xml):
         partner = self.get_or_create_partner(cfdi)
+        lines = self.create_lines(cfdi)
         attachment = self.env["ir.attachment"].create(
             {
                 "name": f"{cfdi['@UUID']}.xml",
@@ -131,13 +182,32 @@ class CFDIImporter(models.TransientModel):
                 "mimetype": "text/xml",
             }
         )
+        l10n_mx_edi_payment_method = self.env["l10n_mx_edi.payment.method"].search(
+            [("code", "=", cfdi.get("@FormaPago"))],
+            limit=1,
+        )
+        currency = (
+            self.env["res.currency"].search(
+                [("name", "=", cfdi.get("@Moneda"))],
+                limit=1,
+            )
+            or self.env.company.currency_id
+        )
+
         move = self.env["account.move"].create(
             {
-                "l10n_mx_edi_cfdi_attachment_id": attachment.id,
-                "partner_id": partner.id,
                 "journal_id": self.journal_id.id,
                 "company_id": self.company_id.id,
+                "l10n_mx_edi_cfdi_attachment_id": attachment.id,
+                "partner_id": partner.id,
                 "move_type": "in_invoice" if cfdi["issued"] else "out_invoice",
+                "invoice_date": cfdi["@Fecha"],
+                "line_ids": lines,
+                "l10n_mx_edi_payment_policy": cfdi.get("@MetodoPago"),
+                "l10n_mx_edi_usage": cfdi["other"].get("@UsoCFDI"),
+                "l10n_mx_edi_cfdi_uuid": cfdi["@UUID"],
+                "l10n_mx_edi_payment_method_id": l10n_mx_edi_payment_method.id,
+                "currency_id": currency.id,
             }
         )
         return move
