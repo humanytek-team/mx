@@ -45,24 +45,54 @@ class CFDIImporter(models.TransientModel):
     journal_id = fields.Many2one(
         comodel_name="account.journal",
         required=True,
-        # TODO domain
-        # TODO default
+        compute="_compute_journal_id",
+        store=True,
+        readonly=False,
     )
     account_id = fields.Many2one(
         comodel_name="account.account",
         required=True,
-        # TODO domain
-        # TODO default
     )
+    suitable_journal_ids = fields.Many2many(
+        comodel_name="account.journal",
+        compute="_compute_suitable_journal_ids",
+    )
+
+    @api.depends("company_id")
+    def _compute_suitable_journal_ids(self):
+        for record in self:
+            company = record.company_id or self.env.company
+            record.suitable_journal_ids = self.env["account.journal"].search(
+                [
+                    *self.env["account.journal"]._check_company_domain(company),
+                    ("type", "in", ["purchase", "sale", "general"]),
+                ]
+            )
+
+    @api.depends("suitable_journal_ids")
+    def _compute_journal_id(self):
+        for record in self:
+            sale_journals = record.suitable_journal_ids.filtered(
+                lambda j: j.type == "sale"
+            )
+            record.journal_id = sale_journals and sale_journals[0]
 
     def improve_cfdi(self, cfdi):
         cfdi["@UUID"] = cfdi["Complemento"]["TimbreFiscalDigital"]["@UUID"]
 
-        if cfdi["@Version"] not in ("3.3", "4.0"):
-            raise ValueError(_("The CFDI %s version is not supported") % cfdi["@UUID"])
+        supported_versions = ("3.3", "4.0")
+        if cfdi["@Version"] not in supported_versions:
+            raise ValueError(
+                _("The CFDI %s version (%s) is not supported, only %s")
+                % (cfdi["@UUID"], cfdi["@Version"], supported_versions)
+            )
 
-        if cfdi["@TipoDeComprobante"] not in ("I"):
-            raise ValueError(_("The CFDI %s type is not supported") % cfdi["@UUID"])
+        supported_types = ("I",)
+        if cfdi["@TipoDeComprobante"] not in supported_types:
+            raise ValueError(
+                _("The CFDI %s type (%s) is not supported, only %s")
+                % (cfdi["@UUID"], cfdi["@TipoDeComprobante"], supported_types)
+            )
 
         rfc_receptor = cfdi["Receptor"]["@Rfc"]
         rfc_emisor = cfdi["Emisor"]["@Rfc"]

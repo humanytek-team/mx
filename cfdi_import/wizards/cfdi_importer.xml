@@ -7,7 +7,9 @@
       <form>
         <group>
           <group>
-            <field name="journal_id"/>
+            <field name="company_id" invisible="1"/>
+            <field name="suitable_journal_ids" invisible="1"/>
+            <field name="journal_id" domain="[('id', 'in', suitable_journal_ids)]"/>
             <field name="account_id"/>
           </group>
         </group>
