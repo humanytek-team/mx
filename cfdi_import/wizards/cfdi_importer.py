@@ -206,6 +206,18 @@ class CFDIImporter(models.TransientModel):
             )
         return lines
 
+    def check_journal(self, cfdi, journal):
+        if cfdi["issued"] and journal.type != "sale":
+            raise ValueError(
+                _("The CFDI %s is issued but the journal is not a sale journal")
+                % cfdi["@UUID"]
+            )
+        if not cfdi["issued"] and journal.type != "purchase":
+            raise ValueError(
+                _("The CFDI %s is received but the journal is not a purchase journal")
+                % cfdi["@UUID"]
+            )
+
     def create_move(self, cfdi, xml):
         partner = self.get_or_create_partner(cfdi)
         lines = self.create_lines(cfdi)
@@ -227,6 +239,8 @@ class CFDIImporter(models.TransientModel):
             )
             or self.env.company.currency_id
         )
+
+        self.check_journal(cfdi, self.journal_id)
 
         move = self.env["account.move"].create(
             {
