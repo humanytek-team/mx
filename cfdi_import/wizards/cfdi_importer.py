@@ -1,6 +1,7 @@
 import base64
 import logging
 import traceback
+from typing import Any
 
 import xmltodict
 from odoo import _, api, fields, models
@@ -77,6 +78,18 @@ class CFDIImporter(models.TransientModel):
             )
             record.journal_id = sale_journals and sale_journals[0]
 
+    def get_issued_info(self, cfdi) -> tuple[bool, dict[str, Any]]:
+        """Return if the CFDI was issued by the company and the other party."""
+        company_rfc = self.company_id.vat
+        receptor, emisor = cfdi["Receptor"], cfdi["Emisor"]
+        if company_rfc not in (receptor["@Rfc"], emisor["@Rfc"]):
+            raise ValueError(
+                _("The CFDI %s does not belong to this company") % cfdi["@UUID"]
+            )
+        issued = company_rfc == receptor["@Rfc"]
+        other = receptor if issued else emisor
+        return issued, other
+
     def improve_cfdi(self, cfdi):
         cfdi["@UUID"] = cfdi["Complemento"]["TimbreFiscalDigital"]["@UUID"]
 
@@ -94,24 +107,9 @@ class CFDIImporter(models.TransientModel):
                 % (cfdi["@UUID"], cfdi["@TipoDeComprobante"], supported_types)
             )
 
-        rfc_receptor = cfdi["Receptor"]["@Rfc"]
-        rfc_emisor = cfdi["Emisor"]["@Rfc"]
-        other_rfc = ""
-        other = None
-        issued = False
-        if self.company_id.vat == rfc_receptor:
-            other_rfc = rfc_emisor
-            other = cfdi["Emisor"]
-            issued = True
-        elif self.company_id.vat == rfc_emisor:
-            other_rfc = rfc_receptor
-            other = cfdi["Receptor"]
-        if not other_rfc:
-            raise ValueError(
-                _("The CFDI %s does not belong to this company") % cfdi["@UUID"]
-            )
-        cfdi["other"] = other
+        issued, other = self.get_issued_info(cfdi)
         cfdi["issued"] = issued
+        cfdi["other"] = other
 
     def get_cfdi(self, xml: str):
         cfdi = xmltodict.parse(
