@@ -233,7 +233,7 @@ class CFDIImporter(models.TransientModel):
                 "journal_id": self.journal_id.id,
                 "company_id": self.company_id.id,
                 "partner_id": partner.id,
-                "move_type": "in_invoice" if cfdi["issued"] else "out_invoice",
+                "move_type": "out_invoice" if cfdi["issued"] else "in_invoice",
                 "invoice_date": cfdi["@Fecha"],
                 "line_ids": lines,
                 "l10n_mx_edi_payment_policy": cfdi.get("@MetodoPago"),
