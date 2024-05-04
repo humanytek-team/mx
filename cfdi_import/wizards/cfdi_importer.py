@@ -86,7 +86,7 @@ class CFDIImporter(models.TransientModel):
             raise ValueError(
                 _("The CFDI %s does not belong to this company") % cfdi["@UUID"]
             )
-        issued = company_rfc == receptor["@Rfc"]
+        issued = company_rfc == emisor["@Rfc"]
         other = receptor if issued else emisor
         return issued, other
 
