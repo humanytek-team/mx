@@ -1,6 +1,6 @@
 {
     "name": "CFDI Import",
-    "version": "17.0.1.0.0",
+    "version": "17.0.1.0.1",
     "author": "Humanytek",
     "website": "https://humanytek.com",
     "depends": [
