@@ -190,6 +190,8 @@ class CFDIImporter(models.TransientModel):
         lines = []
         for concepto in cfdi["Conceptos"]["Concepto"]:
             taxes = self.get_taxes(cfdi, concepto)
+            discount_amount = float(concepto.get("@Descuento", 0))
+            discount_percent = discount_amount / float(concepto["@Importe"])
             lines.append(
                 (
                     0,
@@ -198,7 +200,7 @@ class CFDIImporter(models.TransientModel):
                         "name": concepto["@Descripcion"],
                         "quantity": concepto["@Cantidad"],
                         "price_unit": concepto["@ValorUnitario"],
-                        "discount": concepto.get("@Descuento", 0),
+                        "discount": discount_percent,
                         "tax_ids": [(6, 0, taxes.ids)],
                         "account_id": self.account_id.id,
                     },
