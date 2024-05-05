@@ -273,7 +273,10 @@ class CFDIImporter(models.TransientModel):
         self.env["l10n_mx_edi.document"]._fetch_and_update_sat_status(
             extra_domain=[("id", "in", documents.ids)]
         )
-        move.action_post()
+        try:
+            move.action_post()
+        except Exception as e:
+            _logger.exception(e)
         return move
 
     def action_import_cfdis(self):
