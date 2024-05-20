@@ -220,6 +220,12 @@ class CFDIImporter(models.TransientModel):
                 % cfdi["@UUID"]
             )
 
+    def get_ref(self, cfdi):
+        serie = cfdi.get("@Serie", "")
+        folio = cfdi.get("@Folio", "")
+        sep = "-" if serie and folio else ""
+        return f"{serie}{sep}{folio}"
+
     def create_move(self, cfdi, xml):
         partner = self.get_or_create_partner(cfdi)
         lines = self.create_lines(cfdi)
@@ -257,6 +263,7 @@ class CFDIImporter(models.TransientModel):
                 "l10n_mx_edi_cfdi_uuid": cfdi["@UUID"],
                 "l10n_mx_edi_payment_method_id": l10n_mx_edi_payment_method.id,
                 "currency_id": currency.id,
+                "ref": self.get_ref(cfdi),
             }
         )
 
