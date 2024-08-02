@@ -186,7 +186,7 @@ class CFDIImporter(models.TransientModel):
         ):
             taxes |= self._get_tax(xml_tax, cfdi)
         for xml_tax in (
-            concepto.get("Impuestos", {}).get("Traslados", {}).get("Traslado", [])
+            concepto.get("Impuestos", {}).get("Retenciones", {}).get("Retencion", [])
         ):
             taxes |= self._get_tax(xml_tax, cfdi, -1)
         return taxes
