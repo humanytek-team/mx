@@ -159,31 +159,36 @@ class CFDIImporter(models.TransientModel):
         )
         return partner
 
+    def _get_tax(self, xml_tax, cfdi, sign=1):
+        amount = float(xml_tax["@TasaOCuota"]) * 100 * sign
+        tax = self.env["account.tax"].search(
+            [
+                ("amount", "=", amount),
+                ("type_tax_use", "=", "sale" if cfdi["issued"] else "purchase"),
+                ("company_id", "parent_of", self.company_id.id),
+                ("country_id", "=", self.env.ref("base.mx").id),
+            ]
+        )
+        if not tax:
+            raise ValueError(_("The tax %s is not available") % xml_tax["@TasaOCuota"])
+        if len(tax) > 1:
+            _logger.warning(
+                "Multiple taxes found for %s, using the first one",
+                xml_tax["@TasaOCuota"],
+            )
+            tax = tax[0]
+        return tax
+
     def get_taxes(self, cfdi, concepto):
         taxes = self.env["account.tax"].browse()
-        for traslado in (
+        for xml_tax in (
             concepto.get("Impuestos", {}).get("Traslados", {}).get("Traslado", [])
         ):
-            amount = float(traslado["@TasaOCuota"]) * 100
-            tax = self.env["account.tax"].search(
-                [
-                    ("amount", "=", amount),
-                    ("type_tax_use", "=", "sale" if cfdi["issued"] else "purchase"),
-                    ("company_id", "parent_of", self.company_id.id),
-                    ("country_id", "=", self.env.ref("base.mx").id),
-                ]
-            )
-            if not tax:
-                raise ValueError(
-                    _("The tax %s is not available") % traslado["@TasaOCuota"]
-                )
-            if len(tax) > 1:
-                _logger.warning(
-                    "Multiple taxes found for %s, using the first one",
-                    traslado["@TasaOCuota"],
-                )
-                tax = tax[0]
-            taxes |= tax
+            taxes |= self._get_tax(xml_tax, cfdi)
+        for xml_tax in (
+            concepto.get("Impuestos", {}).get("Traslados", {}).get("Traslado", [])
+        ):
+            taxes |= self._get_tax(xml_tax, cfdi, -1)
         return taxes
 
     def create_lines(self, cfdi):
