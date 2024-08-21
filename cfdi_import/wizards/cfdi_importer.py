@@ -160,7 +160,10 @@ class CFDIImporter(models.TransientModel):
         return partner
 
     def _get_tax(self, xml_tax, cfdi, sign=1):
-        amount = float(xml_tax["@TasaOCuota"]) * 100 * sign
+        amount = float(xml_tax.get("@TasaOCuota", 0)) * 100 * sign
+        extra = []
+        if xml_tax.get("@TipoFactor") == "Exento":
+            extra.append(("l10n_mx_factor_type", "=", "Exento"))
         tax = self.env["account.tax"].search(
             [
                 ("amount", "=", amount),
@@ -168,6 +171,7 @@ class CFDIImporter(models.TransientModel):
                 ("company_id", "parent_of", self.company_id.id),
                 ("country_id", "=", self.env.ref("base.mx").id),
             ]
+            + extra
         )
         if not tax:
             raise ValueError(_("The tax %s is not available") % xml_tax["@TasaOCuota"])
