@@ -1,10 +1,10 @@
 {
     "name": "L10N MX Factoraje",
-    "version": "13.0.0.1.0",
+    "version": "17.0.0.0.0",
     "author": "Humanytek",
     "license": "LGPL-3",
     "depends": [
-        "l10n_mx_edi_40",
+        "l10n_mx_edi",
     ],
     "data": [
         # security
@@ -14,4 +14,4 @@
         # views
         "views/account_payment.xml",
     ],
-}   # noqa  
+}  # noqa

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <odoo>
-    <template id="l10n_mx_edi_40_payment20_extended" inherit_id="l10n_mx_edi_40.payment20">
+    <template id="l10n_mx_edi_40_payment20_extended" inherit_id="l10n_mx_edi.payment20">
         <xpath expr="//*[name()='cfdi:Receptor']" position="attributes">
             <attribute name="t-if"> not record.thirdparty_partner_id </attribute>
         </xpath>
