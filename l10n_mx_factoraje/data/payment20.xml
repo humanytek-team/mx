@@ -2,17 +2,17 @@
 <odoo>
     <template id="l10n_mx_edi_40_payment20_extended" inherit_id="l10n_mx_edi.payment20">
         <xpath expr="//*[name()='cfdi:Receptor']" position="attributes">
-            <attribute name="t-if"> not record.thirdparty_partner_id </attribute>
+            <attribute name="t-if"> not thirdparty_partner_id </attribute>
         </xpath>
         <xpath expr="//*[name()='cfdi:Receptor']" position="after">
             <cfdi:Receptor
                 xmlns:cfdi="http://www.sat.gob.mx/cfd/4"
-                t-if="record.thirdparty_partner_id"
-                t-att-Rfc="record.thirdparty_partner_id.vat"
-                t-att-Nombre="format_string(record.thirdparty_partner_id.name, 254)"
-                t-att-ResidenciaFiscal="record.thirdparty_partner_id.country_id.l10n_mx_edi_code if record.thirdparty_partner_id.country_id.l10n_mx_edi_code != 'MEX' else None"
-                t-att-DomicilioFiscalReceptor="record.thirdparty_partner_id.zip if record.thirdparty_partner_id.country_id.code == 'MX' else supplier.zip"
-                t-att-RegimenFiscalReceptor="record.thirdparty_partner_id.l10n_mx_edi_fiscal_regime"
+                t-if="thirdparty_partner_id"
+                t-att-Rfc="thirdparty_partner_id.vat"
+                t-att-Nombre="format_string(thirdparty_partner_id.name, 254)"
+                t-att-ResidenciaFiscal="thirdparty_partner_id.country_id.l10n_mx_edi_code if thirdparty_partner_id.country_id.l10n_mx_edi_code != 'MEX' else None"
+                t-att-DomicilioFiscalReceptor="thirdparty_partner_id.zip if thirdparty_partner_id.country_id.code == 'MX' else supplier.zip"
+                t-att-RegimenFiscalReceptor="thirdparty_partner_id.l10n_mx_edi_fiscal_regime"
                 UsoCFDI="CP01"/>
         </xpath>
     </template>
