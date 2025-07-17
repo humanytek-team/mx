@@ -1,10 +1,11 @@
 {
     "name": "CFDI Import",
-    "version": "17.0.1.0.1",
+    "version": "1.1", #for Odoo V18+
     "author": "Humanytek",
     "website": "https://humanytek.com",
     "depends": [
         "l10n_mx_edi",
+        "account_invoice_extract", #dependency in Odoo V18+
     ],
     "data": [
         # security
