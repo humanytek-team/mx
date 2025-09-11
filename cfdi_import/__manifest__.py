@@ -5,7 +5,8 @@
     "website": "https://humanytek.com",
     "depends": [
         "l10n_mx_edi",
-        "account_invoice_extract", #dependency in Odoo V18+
+        "account_invoice_extract",
+        "sale" #dependency in Odoo V18+
     ],
     "data": [
         # security
@@ -13,6 +14,7 @@
         # data
         # reports
         # views
+        "views/res_partner.xml"
         # wizards
         "wizards/cfdi_importer.xml",
     ],
