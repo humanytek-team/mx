@@ -14,7 +14,7 @@
         # data
         # reports
         # views
-        "views/res_partner.xml"
+        "views/res_partner.xml",
         # wizards
         "wizards/cfdi_importer.xml",
     ],
