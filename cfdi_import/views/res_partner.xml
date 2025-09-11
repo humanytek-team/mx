@@ -3,7 +3,7 @@
   <record id="res.partner.property.ignore.importer.form.inherit" model="ir.ui.view">
     <field name="name">res.partner.property.ignore.importer.form.inherit</field>
     <field name="model">res.partner</field>
-    <field name="inherit_id">account.view_partner_property_form</field>
+    <field name="inherit_id">res.partner.property.form.inherit</field>
     <field name="arch" type="xml">
         <xpath expr="//field[@name='property_account_payable_id']" position="after">
             <field name="ignore_import_xml"/>
