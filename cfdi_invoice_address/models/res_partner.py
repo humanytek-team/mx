@@ -4,7 +4,7 @@ from odoo import api, models
 class Partner(models.Model):
     _inherit = "res.partner"
 
-    @api.depends("is_company", "parent_id.commercial_partner_id")
+    @api.depends("is_company", "parent_id.commercial_partner_id", "child_ids")
     def _compute_commercial_partner(self):
         super()._compute_commercial_partner()
         for partner in self:
