@@ -21,7 +21,7 @@ class L10nMxEdiDocument(models.Model):
                 "supplier": invoice_partner or supplier.vat,
                 "rfc": invoice_partner.vat or supplier.vat,
                 "nombre": self._cfdi_sanitize_to_legal_name(
-                    invoice_partner_id.name or supplier.vat
+                    invoice_partner.name or supplier.vat
                 ),
                 "domicilio_fiscal_receptor": invoice_partner.zip or supplier.zip,
             }
