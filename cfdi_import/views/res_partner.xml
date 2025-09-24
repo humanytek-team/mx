@@ -5,9 +5,9 @@
         <field name="model">res.partner</field>
         <field name="inherit_id" ref="account.view_partner_property_form"/>
         <field name="arch" type="xml">
-            <xpath expr="//field[@name='property_account_payable_id']" position="after">
+            <field name="property_account_payable_id" position="after">
                 <field name="ignore_import_xml"/>
-            </xpath>
+            </field>
         </field>
     </record>
 </odoo>

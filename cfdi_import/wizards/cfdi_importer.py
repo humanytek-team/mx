@@ -140,7 +140,8 @@ class CFDIImporter(models.TransientModel):
 
     def get_partner(self, cfdi):
         return self.env["res.partner"].search(
-            [("vat", "=", cfdi["other"]["@Rfc"]),("ignore_import_xml", "=", False)], limit=1
+            [("vat", "=", cfdi["other"]["@Rfc"]), ("ignore_import_xml", "=", False)],
+            limit=1,
         )
 
     def get_or_create_partner(self, cfdi):

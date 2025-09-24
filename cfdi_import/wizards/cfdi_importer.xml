@@ -14,8 +14,7 @@
           </group>
         </group>
         <group>
-          <field name="xml_ids" widget="many2many_binary"
-            class="g-col-8"/>
+          <field name="xml_ids" widget="many2many_binary" class="g-col-8"/>
         </group>
         <!-- Show error messages here -->
         <group invisible="not errors">
@@ -29,8 +28,7 @@
           </page>
         </notebook>
         <footer>
-          <button string="Import" type="object" name="action_import_cfdis"
-            class="oe_highlight"/>
+          <button string="Import" type="object" name="action_import_cfdis" class="oe_highlight"/>
           <button string="Cancel" class="oe_link" special="cancel"/>
         </footer>
       </form>
@@ -45,9 +43,5 @@
     <field name="target">new</field>
   </record>
 
-  <menuitem id="menu_cfdi_importer" name="Import CFDIs"
-    parent="account.menu_finance_entries"
-    action="action_cfdi_importer"
-    groups="base.group_no_one"
-    sequence="100"/>
+  <menuitem id="menu_cfdi_importer" name="Import CFDIs" parent="account.menu_finance_entries" action="action_cfdi_importer" groups="base.group_no_one" sequence="100"/>
 </odoo>
