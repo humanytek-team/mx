@@ -4,6 +4,7 @@ import traceback
 from typing import Any
 
 import xmltodict
+
 from odoo import _, api, fields, models
 
 _logger = logging.getLogger(__name__)
@@ -82,7 +83,7 @@ class CFDIImporter(models.TransientModel):
         """Return if the CFDI was issued by the company and the other party."""
         company_rfc = self.company_id.vat
         receptor, emisor = cfdi["Receptor"], cfdi["Emisor"]
-        if company_rfc not in (receptor["@Rfc"], emisor["@Rfc"]):
+        if company_rfc not in {receptor["@Rfc"], emisor["@Rfc"]}:
             raise ValueError(
                 _("The CFDI %s does not belong to this company") % cfdi["@UUID"]
             )
@@ -93,14 +94,14 @@ class CFDIImporter(models.TransientModel):
     def improve_cfdi(self, cfdi):
         cfdi["@UUID"] = cfdi["Complemento"]["TimbreFiscalDigital"]["@UUID"]
 
-        supported_versions = ("3.3", "4.0")
+        supported_versions = {"3.3", "4.0"}
         if cfdi["@Version"] not in supported_versions:
             raise ValueError(
                 _("The CFDI %s version (%s) is not supported, only %s")
                 % (cfdi["@UUID"], cfdi["@Version"], supported_versions)
             )
 
-        supported_types = ("I",)
+        supported_types = {"I", "E"}
         if cfdi["@TipoDeComprobante"] not in supported_types:
             raise ValueError(
                 _("The CFDI %s type (%s) is not supported, only %s")
@@ -236,6 +237,22 @@ class CFDIImporter(models.TransientModel):
         sep = "-" if serie and folio else ""
         return f"{serie}{sep}{folio}"
 
+    def get_move_type(self, cfdi):
+        if cfdi["issued"]:
+            if cfdi["@TipoDeComprobante"] == "I":
+                return "out_invoice"
+            elif cfdi["@TipoDeComprobante"] == "E":
+                return "out_refund"
+        else:
+            if cfdi["@TipoDeComprobante"] == "I":
+                return "in_invoice"
+            elif cfdi["@TipoDeComprobante"] == "E":
+                return "in_refund"
+        raise ValueError(
+            _("The CFDI %s type (%s) is not supported")
+            % (cfdi["@UUID"], cfdi["@TipoDeComprobante"])
+        )
+
     def create_move(self, cfdi, xml):
         partner = self.get_or_create_partner(cfdi)
         lines = self.create_lines(cfdi)
@@ -265,7 +282,7 @@ class CFDIImporter(models.TransientModel):
                 "journal_id": self.journal_id.id,
                 "company_id": self.company_id.id,
                 "partner_id": partner.id,
-                "move_type": "out_invoice" if cfdi["issued"] else "in_invoice",
+                "move_type": self.get_move_type(cfdi),
                 "invoice_date": cfdi["@Fecha"],
                 "line_ids": lines,
                 "l10n_mx_edi_payment_policy": cfdi.get("@MetodoPago"),
