@@ -1,4 +1,8 @@
+import logging
+
 from odoo import api, models
+
+_logger = logging.getLogger(__name__)
 
 
 class L10nMxEdiDocument(models.Model):
@@ -16,13 +20,17 @@ class L10nMxEdiDocument(models.Model):
         if not invoice_partner_id:
             return
         invoice_partner = self.env["res.partner"].browse(invoice_partner_id)
+        final_partner = invoice_partner or supplier
+        _logger.info(
+            "Using %s as supplier for CFDI generation instead of company %s",
+            final_partner.id,
+            supplier.id,
+        )
         cfdi_values["emisor"].update(
             {
-                "supplier": invoice_partner or supplier.vat,
-                "rfc": invoice_partner.vat or supplier.vat,
-                "nombre": self._cfdi_sanitize_to_legal_name(
-                    invoice_partner.name or supplier.vat
-                ),
-                "domicilio_fiscal_receptor": invoice_partner.zip or supplier.zip,
+                "supplier": final_partner,
+                "rfc": final_partner.vat,
+                "nombre": self._cfdi_sanitize_to_legal_name(final_partner.name),
+                "domicilio_fiscal_receptor": final_partner.zip,
             }
         )
