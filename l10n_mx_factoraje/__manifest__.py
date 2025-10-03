@@ -3,6 +3,7 @@
     "version": "1.1",
     "author": "Humanytek",
     "license": "LGPL-3",
+    "maintainers": ["renevillegasr", "AfroMonkey"],
     "depends": [
         "l10n_mx_edi",
     ],
@@ -14,4 +15,4 @@
         # views
         "views/account_payment.xml",
     ],
-}  # noqa
+}
