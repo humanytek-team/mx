@@ -347,7 +347,7 @@ class CFDIImporter(models.TransientModel):
 {trace}
 """
             else:
-                attachment.unlink()
+                self.xml_ids -= attachment
         return {
             "type": "ir.actions.act_window",
             "res_model": "cfdi_importer",
