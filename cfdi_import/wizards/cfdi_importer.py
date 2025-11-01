@@ -28,6 +28,17 @@ class CFDIImporter(models.TransientModel):
     _name = "cfdi_importer"
     _description = "CFDI Importer"
 
+    def _default_xml_ids(self):
+        context = self.env.context
+        active_ids = context.get("active_ids", [])
+        if not context.get("active_model"):
+            return None
+        model = self.env[context["active_model"]]
+        if not hasattr(model, "attachment_id"):
+            return None
+        records = self.env[self.env.context.get("active_model")].browse(active_ids)
+        return self.env["ir.attachment"].browse(records.mapped("attachment_id").ids)
+
     company_id = fields.Many2one(
         comodel_name="res.company",
         required=True,
@@ -36,6 +47,7 @@ class CFDIImporter(models.TransientModel):
     xml_ids = fields.Many2many(
         string="XMLs",
         comodel_name="ir.attachment",
+        default=_default_xml_ids,
     )
     errors = fields.Text(
         readonly=True,
