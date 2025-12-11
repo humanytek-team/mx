@@ -10,6 +10,7 @@
         # security
         # data
         # reports
+        "reports/report_invoice.xml",
         # views
         # wizards
     ],
