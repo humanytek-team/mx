@@ -15,4 +15,5 @@
         # views
         "views/account_payment.xml",
     ],
+    "installable": False
 }
