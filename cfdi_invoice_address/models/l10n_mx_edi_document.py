@@ -11,9 +11,6 @@ class L10nMxEdiDocument(models.Model):
     @api.model
     def _add_certificate_cfdi_values(self, cfdi_values):
         super()._add_certificate_cfdi_values(cfdi_values)
-        self.sudo().set_supplier_from_partner(cfdi_values)
-
-    def set_supplier_from_partner(self, cfdi_values):
         # If company has invoicing contact, use it as supplier
         root_company = cfdi_values["root_company"]
         supplier = root_company.partner_id.commercial_partner_id.with_user(

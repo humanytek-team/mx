@@ -9,8 +9,7 @@
     "data": [
         # security
         # data
-        # reports
-        "reports/report_invoice.xml",
+        # reports        
         # views
         # wizards
     ],
