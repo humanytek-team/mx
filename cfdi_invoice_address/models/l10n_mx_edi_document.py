@@ -26,6 +26,8 @@ class L10nMxEdiDocument(models.Model):
             final_partner.id,
             supplier.id,
         )
+        if not cfdi_values.get("emisor"):
+            return
         cfdi_values["emisor"].update(
             {
                 "supplier": final_partner,
