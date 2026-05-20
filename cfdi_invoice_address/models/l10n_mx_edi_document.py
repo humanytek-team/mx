@@ -19,7 +19,7 @@ class L10nMxEdiDocument(models.Model):
         invoice_partner_id = supplier.address_get(["invoice"]).get("invoice")
         if not invoice_partner_id:
             return
-        invoice_partner = self.env["res.partner"].browse(invoice_partner_id)
+        invoice_partner = self.env["res.partner"].sudo().browse(invoice_partner_id)
         final_partner = invoice_partner or supplier
         _logger.info(
             "Using %s as supplier for CFDI generation instead of company %s",
