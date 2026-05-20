@@ -11,15 +11,14 @@ class L10nMxEdiDocument(models.Model):
     @api.model
     def _add_certificate_cfdi_values(self, cfdi_values):
         super()._add_certificate_cfdi_values(cfdi_values)
+        self = self.sudo()
         # If company has invoicing contact, use it as supplier
         root_company = cfdi_values["root_company"]
-        supplier = root_company.partner_id.commercial_partner_id.with_user(
-            self.env.user
-        )
+        supplier = root_company.partner_id.commercial_partner_id
         invoice_partner_id = supplier.address_get(["invoice"]).get("invoice")
         if not invoice_partner_id:
             return
-        invoice_partner = self.env["res.partner"].sudo().browse(invoice_partner_id)
+        invoice_partner = self.env["res.partner"].browse(invoice_partner_id)
         final_partner = invoice_partner or supplier
         _logger.info(
             "Using %s as supplier for CFDI generation instead of company %s",
