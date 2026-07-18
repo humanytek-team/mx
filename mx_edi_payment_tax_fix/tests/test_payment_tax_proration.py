@@ -93,30 +93,28 @@ class TestPaymentTaxProrationFix(TestMxEdiCommon):
 
             tree = etree.fromstring(payment_document.attachment_id.raw)
 
-        # -- Per-document (DR) tax breakdown: no leftover IEPS proration. --
+        # -- Per-document (DR) tax breakdown: no leftover IEPS proration.
+        # The node must be entirely absent, not zero-valued: SAT rejects a
+        # TrasladoDR/TrasladoP whose BaseDR/BaseP is 0 (error #CRP20255).
         ieps_traslados_dr = [
             node
             for node in tree.findall(".//pago20:TrasladoDR", PAGO20_NS)
             if node.get("ImpuestoDR") == "003"
         ]
-        for node in ieps_traslados_dr:
-            self.assertAlmostEqual(float(node.get("ImporteDR") or 0.0), 0.0, places=2)
+        self.assertFalse(
+            ieps_traslados_dr,
+            "IEPS must be entirely absent from the payment complement: it was "
+            "fully cancelled by the credit note before this payment, and SAT "
+            "rejects a zero-valued Traslado node (#CRP20255).",
+        )
 
-        # -- Aggregated (P) tax breakdown: IEPS must be zeroed out. --
+        # -- Aggregated (P) tax breakdown: IEPS must be absent too. --
         ieps_traslados_p = [
             node
             for node in tree.findall(".//pago20:TrasladoP", PAGO20_NS)
             if node.get("ImpuestoP") == "003"
         ]
-        for node in ieps_traslados_p:
-            self.assertAlmostEqual(
-                float(node.get("ImporteP") or 0.0),
-                0.0,
-                places=2,
-                msg="IEPS must be zeroed out in the payment complement: it "
-                    "was fully cancelled by the credit note before this payment.",
-            )
-            self.assertAlmostEqual(float(node.get("BaseP") or 0.0), 0.0, places=2)
+        self.assertFalse(ieps_traslados_p)
 
         # -- The remaining VAT-only base/tax must reconcile with the amount paid. --
         docto_relacionado = tree.find(".//pago20:DoctoRelacionado", PAGO20_NS)

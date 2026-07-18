@@ -132,6 +132,18 @@ class AccountMove(models.Model):
                         if tax_values.get(tax_key) is not None:
                             tax_values[tax_key] = invoice.currency_id.round(tax_values[tax_key] * percentage_paid)
 
+                    # A tax fully cancelled by a credit note nets down to a zero base
+                    # (Traslado/Retencion) here. The SAT schema requires BaseDR/ImporteDR
+                    # to be strictly greater than zero (see error #CRP20255), so such a
+                    # tax must be dropped from this payment's breakdown entirely rather
+                    # than reported as a zero-valued node.
+                    base = tax_values.get("base")
+                    importe = tax_values.get("importe")
+                    if base is not None and invoice.currency_id.is_zero(base):
+                        continue
+                    if base is None and importe is not None and invoice.currency_id.is_zero(importe):
+                        continue
+
                     if all(tax_values.get(k) is not None for k in ("base", "importe", "tasa_o_cuota")):
                         post_amounts_map = document._get_post_fix_tax_amounts_map(
                             base_amount=tax_values["base"],
@@ -278,7 +290,14 @@ class AccountMove(models.Model):
             ("local_retenciones_list", local_retenciones_values_map),
             ("local_traslados_list", local_traslados_values_map),
         ):
-            cfdi_values[target_key] = [{**k, **v} for k, v in source_dict.items()]
+            # Same SAT constraint as above (#CRP20255): never emit a node whose
+            # base (or, lacking a base, importe) rounds down to zero once
+            # aggregated across all the payment's related documents.
+            cfdi_values[target_key] = [
+                {**k, **v}
+                for k, v in source_dict.items()
+                if not company_curr.is_zero(v.get("base", v["importe"]))
+            ]
 
         # Cleanup attributes for Exento taxes.
         for key in ("traslados_list", "local_traslados_list"):
