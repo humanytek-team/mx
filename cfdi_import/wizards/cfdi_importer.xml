@@ -11,6 +11,7 @@
             <field name="suitable_journal_ids" invisible="1"/>
             <field name="journal_id" domain="[('id', 'in', suitable_journal_ids)]"/>
             <field name="account_id"/>
+            <field name="invoice_date"/>
           </group>
         </group>
         <group>

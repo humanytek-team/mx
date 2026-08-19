@@ -71,6 +71,11 @@ class CFDIImporter(models.TransientModel):
         comodel_name="account.journal",
         compute="_compute_suitable_journal_ids",
     )
+    invoice_date = fields.Date(
+        string="Invoice Date",
+        help="If set, all imported invoices will be dated with this date "
+        "instead of the date on the CFDI.",
+    )
 
     @api.depends("company_id")
     def _compute_suitable_journal_ids(self):
@@ -296,7 +301,7 @@ class CFDIImporter(models.TransientModel):
                 "company_id": self.company_id.id,
                 "partner_id": partner.id,
                 "move_type": self.get_move_type(cfdi),
-                "invoice_date": cfdi["@Fecha"],
+                "invoice_date": self.invoice_date or cfdi["@Fecha"],
                 "line_ids": lines,
                 "l10n_mx_edi_payment_policy": cfdi.get("@MetodoPago"),
                 "l10n_mx_edi_usage": cfdi["other"].get("@UsoCFDI"),
