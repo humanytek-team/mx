@@ -71,30 +71,42 @@ class CFDIImporter(models.TransientModel):
         comodel_name="account.journal",
         compute="_compute_suitable_journal_ids",
     )
+    operation_type = fields.Selection(
+        selection=[("sale", "Sales"), ("purchase", "Purchases")],
+        string="Operation Type",
+        help="If set, only journals of this type will be selectable. "
+        "If not set, both sale and purchase journals are available.",
+    )
     invoice_date = fields.Date(
         string="Invoice Date",
         help="If set, all imported invoices will be dated with this date "
         "instead of the date on the CFDI.",
     )
 
-    @api.depends("company_id")
+    @api.depends("company_id", "operation_type")
     def _compute_suitable_journal_ids(self):
         for record in self:
             company = record.company_id or self.env.company
+            allowed_types = (
+                [record.operation_type, "general"]
+                if record.operation_type
+                else ["purchase", "sale", "general"]
+            )
             record.suitable_journal_ids = self.env["account.journal"].search(
                 [
                     *self.env["account.journal"]._check_company_domain(company),
-                    ("type", "in", ["purchase", "sale", "general"]),
+                    ("type", "in", allowed_types),
                 ]
             )
 
     @api.depends("suitable_journal_ids")
     def _compute_journal_id(self):
         for record in self:
-            sale_journals = record.suitable_journal_ids.filtered(
-                lambda j: j.type == "sale"
+            preferred_type = record.operation_type or "sale"
+            preferred_journals = record.suitable_journal_ids.filtered(
+                lambda j, preferred_type=preferred_type: j.type == preferred_type
             )
-            record.journal_id = sale_journals and sale_journals[0]
+            record.journal_id = preferred_journals and preferred_journals[0]
 
     def get_issued_info(self, cfdi) -> tuple[bool, dict[str, Any]]:
         """Return if the CFDI was issued by the company and the other party."""
