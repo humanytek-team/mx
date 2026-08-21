@@ -25,6 +25,15 @@ class AccountMove(models.Model):
     invoice's tax breakdown from its OPEN amount (original amount minus any
     reconciled credit notes, tax group by tax group) instead of the
     original amount, and rebuild the aggregated tax totals from that.
+
+    Only invoices that actually have a related credit note go through this
+    recompute; every other invoice is left exactly as Odoo computed it.
+    An earlier version of this fix ran unconditionally for every invoice
+    and rounded 'base'/'importe' down to currency precision (2 decimals)
+    along the way, which silently discarded the 6-decimal precision the
+    SAT requires for TrasladoDR/RetencionDR and caused error #CRP20261
+    (ImporteDR not matching BaseDR x TasaOCuotaDR within the 0.000001
+    tolerance) even for payments with no credit note involved at all.
     """
 
     _inherit = "account.move"
@@ -109,15 +118,29 @@ class AccountMove(models.Model):
             return res
 
         document = self.env["l10n_mx_edi.document"]
+        any_recomputed = False
 
         for invoice_values, doc_values in zip(pay_results["invoice_results"], cfdi_values["docto_relationado_list"]):
             invoice = invoice_values["invoice"]
+
+            # Only recompute this invoice's tax breakdown when a credit note
+            # actually cancelled part of it. Otherwise, Odoo's own breakdown
+            # (already correct, at the 6-decimal precision the SAT expects
+            # for this node) is left untouched: this override used to run
+            # unconditionally and re-round 'base'/'importe' down to currency
+            # precision (2 decimals) even without a credit note involved,
+            # which is what triggered SAT error #CRP20261 (ImporteDR not
+            # matching BaseDR x TasaOCuotaDR within the 0.000001 tolerance).
+            if not invoice._l10n_mx_edi_get_invoice_related_credit_notes():
+                continue
 
             open_inv_cfdi_values = document._get_company_cfdi_values(invoice.company_id)
             document._add_certificate_cfdi_values(open_inv_cfdi_values)
             invoice._l10n_mx_edi_add_open_invoice_cfdi_values(open_inv_cfdi_values)
             if open_inv_cfdi_values.get("errors"):
                 continue
+
+            any_recomputed = True
 
             open_amount_total = open_inv_cfdi_values.get("mx_edi_payment_tax_fix_open_amount_total") or 0.0
             percentage_paid = (
@@ -130,7 +153,9 @@ class AccountMove(models.Model):
                     tax_values = dict(tax_values)
                     for tax_key in ("base", "importe"):
                         if tax_values.get(tax_key) is not None:
-                            tax_values[tax_key] = invoice.currency_id.round(tax_values[tax_key] * percentage_paid)
+                            # Keep the SAT's 6-decimal precision for this node
+                            # instead of rounding down to currency precision.
+                            tax_values[tax_key] = float_round(tax_values[tax_key] * percentage_paid, precision_digits=6)
 
                     # A tax fully cancelled by a credit note nets down to a zero base
                     # (Traslado/Retencion) here. The SAT schema requires BaseDR/ImporteDR
@@ -149,7 +174,7 @@ class AccountMove(models.Model):
                             base_amount=tax_values["base"],
                             tax_amount=tax_values["importe"],
                             tax_rate=tax_values["tasa_o_cuota"],
-                            precision_digits=invoice.currency_id.decimal_places,
+                            precision_digits=6,
                         )
                         tax_values["importe"] = post_amounts_map["new_tax_amount"]
                         tax_values["base"] = post_amounts_map["new_base_amount"]
@@ -157,7 +182,8 @@ class AccountMove(models.Model):
                     new_tax_values_list.append(tax_values)
                 doc_values[key] = new_tax_values_list
 
-        self._mx_edi_payment_tax_fix_recompute_totals(cfdi_values)
+        if any_recomputed:
+            self._mx_edi_payment_tax_fix_recompute_totals(cfdi_values)
 
         return res
 

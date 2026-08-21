@@ -129,3 +129,59 @@ class TestPaymentTaxProrationFix(TestMxEdiCommon):
 
         totales = tree.find(".//pago20:Totales", PAGO20_NS)
         self.assertAlmostEqual(float(totales.get("MontoTotalPagos")), 1160.0, places=2)
+
+    def test_payment_complement_without_credit_note_keeps_sat_precision(self):
+        """ Regression test for SAT error #CRP20261.
+
+        An earlier version of this module recomputed the tax breakdown for
+        EVERY invoice unconditionally (even with no credit note involved)
+        and rounded 'base'/'importe' down to currency precision (2
+        decimals). That discarded the 6-decimal precision the SAT requires
+        for TrasladoDR/RetencionDR, so 'ImporteDR' stopped matching
+        'BaseDR x TasaOCuotaDR' within the SAT's 0.000001 tolerance (e.g.
+        1737.88 x 0.06 = 104.2728 but Odoo emitted 104.27).
+
+        With no credit note involved, this module must leave Odoo's own
+        (correct) breakdown untouched.
+        """
+        with freeze_time("2017-01-07"):
+            invoice = self._create_invoice(
+                invoice_line_ids=[
+                    Command.create({
+                        "product_id": self.product.id,
+                        "price_unit": 1737.88,
+                        "tax_ids": [Command.set(self.tax_6_ieps.ids)],
+                    }),
+                ],
+            )
+            with self.with_mocked_pac_sign_success():
+                invoice._l10n_mx_edi_cfdi_invoice_try_send()
+            self.assertEqual(invoice.l10n_mx_edi_cfdi_state, "sent")
+
+            payment = self._create_payment(invoice, amount=invoice.amount_residual)
+
+            with self.with_mocked_pac_sign_success():
+                invoice.l10n_mx_edi_cfdi_invoice_try_update_payments()
+
+            payment_document = payment.move_id.l10n_mx_edi_payment_document_ids.sorted()[:1]
+            self.assertEqual(payment_document.state, "payment_sent")
+
+            tree = etree.fromstring(payment_document.attachment_id.raw)
+
+        ieps_traslados_dr = [
+            node
+            for node in tree.findall(".//pago20:TrasladoDR", PAGO20_NS)
+            if node.get("ImpuestoDR") == "003"
+        ]
+        self.assertTrue(ieps_traslados_dr)
+
+        for node in ieps_traslados_dr:
+            base = float(node.get("BaseDR"))
+            rate = float(node.get("TasaOCuotaDR"))
+            importe = float(node.get("ImporteDR"))
+            self.assertLessEqual(
+                abs(base * rate - importe),
+                0.000001,
+                f"ImporteDR={importe} does not match BaseDR x TasaOCuotaDR="
+                f"{base * rate} within the SAT's tolerance (CRP20261).",
+            )

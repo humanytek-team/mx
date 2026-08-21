@@ -52,6 +52,24 @@ Con esto, si la nota de crédito canceló por completo la línea con IEPS, ese
 impuesto queda en $0 en el complemento de pago del saldo restante, y el
 total vuelve a cuadrar.
 
+Solo se recalcula el desglose de una factura si tiene realmente una nota de
+crédito conciliada; cualquier otra factura queda exactamente como Odoo la
+calculó, sin tocar nada.
+
+Bug corregido (CRP20261)
+-------------------------
+
+Una versión anterior de este módulo ejecutaba el recálculo para **toda**
+factura, tuviera o no nota de crédito, y redondeaba ``base``/``importe`` a
+la precisión de la moneda (2 decimales) en el proceso. Eso descartaba en
+silencio la precisión de 6 decimales que el SAT exige para
+``TrasladoDR``/``RetencionDR``, provocando el error ``CRP20261``
+(``ImporteDR`` no coincide con ``BaseDR × TasaOCuotaDR`` dentro de la
+tolerancia de 0.000001) incluso en pagos sin ninguna nota de crédito
+involucrada. Se corrigió para que el módulo solo actúe cuando de verdad hay
+una nota de crédito que netear, y para que use precisión de 6 decimales
+(no 2) al hacerlo.
+
 Limitación conocida
 --------------------
 
