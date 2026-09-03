@@ -244,7 +244,14 @@ class AccountMove(models.Model):
                         "tasa_o_cuota": tax_values["tasa_o_cuota"],
                         "local_tax_name": tax_values.get("local_tax_name"),
                     })
-                    result_dict[tax_key]["importe"] += tax_values["importe"] / inv_rate
+                    # Round to 6 decimals (the precision at which BaseDR/
+                    # ImporteDR/RetencionDR are actually rendered) BEFORE
+                    # accumulating: summing the raw, unrounded upstream
+                    # floats and rounding only the total can disagree with
+                    # summing the values as displayed on each related
+                    # document, which is what the SAT compares against
+                    # (error #CRP20268).
+                    result_dict[tax_key]["importe"] += float_round(tax_values["importe"] / inv_rate, 6)
 
                     tax_amount_mxn = tax_values["importe"] * to_mxn_rate
                     if tax_values["impuesto"] == "001":
@@ -265,8 +272,12 @@ class AccountMove(models.Model):
                         "tasa_o_cuota": tax_values["tasa_o_cuota"],
                     })
                     tax_amount = tax_values["importe"] or 0.0
-                    result_dict[tax_key]["base"] += tax_values["base"] / inv_rate
-                    result_dict[tax_key]["importe"] += tax_amount / inv_rate
+                    # Same rounding-order fix as above (#CRP20268): round
+                    # each related document's base/importe to 6 decimals
+                    # before summing, so the aggregate matches the sum of
+                    # what is actually rendered as BaseDR/ImporteDR.
+                    result_dict[tax_key]["base"] += float_round(tax_values["base"] / inv_rate, 6)
+                    result_dict[tax_key]["importe"] += float_round(tax_amount / inv_rate, 6)
 
                     base_amount_mxn = tax_values["base"] * to_mxn_rate
                     tax_amount_mxn = tax_amount * to_mxn_rate

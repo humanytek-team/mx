@@ -70,6 +70,29 @@ involucrada. Se corrigió para que el módulo solo actúe cuando de verdad hay
 una nota de crédito que netear, y para que use precisión de 6 decimales
 (no 2) al hacerlo.
 
+Bug corregido (CRP20268)
+-------------------------
+
+``_mx_edi_payment_tax_fix_recompute_totals`` reconstruye cada nodo agregado
+(``TrasladoP``/``RetencionP``) sumando el ``base``/``importe`` (en punto
+flotante, con la precisión completa que trae internamente) de cada
+documento relacionado que comparte impuesto y tasa, y solo al final
+redondea la SUMA a 6 decimales. Pero el ``BaseDR``/``ImporteDR`` de cada
+documento relacionado se redondea a 6 decimales de forma independiente al
+momento de renderizarlo en el XML. Cuando varias facturas no tocadas por
+este módulo traen ruido de punto flotante por debajo del sexto decimal
+(algo normal en el cálculo de impuestos de Odoo), cada una redondea al
+mismo ``BaseDR`` que aparece en el XML, pero sumar los valores "crudos"
+(sin redondear) antes de redondear el total puede cruzar un límite de
+redondeo que la suma de los valores ya mostrados nunca cruzaría. Eso
+produjo, en un caso real, ``BaseP="113352.470196"`` cuando la suma de los
+``BaseDR`` correspondientes era ``113352.470195``: exactamente el
+desajuste que rechaza la regla ``CRP20268`` del SAT (``BaseP`` debe ser
+igual a la suma de las bases de los documentos relacionados cuyo impuesto y
+tasa coincidan con los de ese nodo). Se corrigió redondeando cada
+``base``/``importe`` a 6 decimales **antes** de acumularlo, en vez de
+acumular sin redondear y redondear solo el total.
+
 Limitación conocida
 --------------------
 

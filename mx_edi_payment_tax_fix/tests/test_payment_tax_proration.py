@@ -185,3 +185,96 @@ class TestPaymentTaxProrationFix(TestMxEdiCommon):
                 f"ImporteDR={importe} does not match BaseDR x TasaOCuotaDR="
                 f"{base * rate} within the SAT's tolerance (CRP20261).",
             )
+
+    def test_payment_totals_base_matches_sum_of_related_documents_bases(self):
+        """ Regression test for SAT error #CRP20268.
+
+        '_mx_edi_payment_tax_fix_recompute_totals' rebuilds each aggregated
+        TrasladoP/RetencionP node by summing the (raw, double-precision)
+        'base' of every DoctoRelacionado sharing the same tax/rate, then
+        rounds that SUM to 6 decimals. But each DoctoRelacionado's own
+        BaseDR is rounded to 6 decimals independently when rendered. Those
+        two roundings can disagree: 17 untouched invoice lines, several
+        carrying a few units of floating-point noise below the 6th decimal
+        (e.g. from Odoo's own upstream tax computation), each round to the
+        *same* BaseDR shown in the XML, but summing the noisy raw floats
+        first crosses a rounding boundary that summing the already-rounded
+        BaseDR values never would - so BaseP came out one micro-unit higher
+        than 'sum(BaseDR)', e.g. in a real production CFDI:
+
+            BaseP="113352.470196" vs sum(BaseDR) == 113352.470195
+
+        which is exactly the mismatch SAT's rule CRP20268 rejects: BaseP
+        must equal the sum of the BaseDR of every related document whose
+        ImpuestoDR/TasaOCuotaDR match this node's ImpuestoP/TasaOCuotaP.
+
+        The fix is to round each DoctoRelacionado's base to 6 decimals
+        BEFORE accumulating it into the aggregate, i.e. sum what will
+        actually be displayed as BaseDR, not the raw upstream floats.
+        """
+        company = self.company_data["company"]
+
+        # The 17 "IVA 0%" bases from the real rejected CFDI
+        # (BBVA1-PBBVA1202605892-MX-Payment-20.xml).
+        displayed_bases = [
+            14103.531687, 8485.161600, 32577.598392, 6241.605200,
+            7973.143953, 148.144540, 740.722700, 1933.075269,
+            1793.699700, 2774.236770, 8916.020100, 4483.678100,
+            2034.408600, 11025.955168, 4942.563760, 159.569856,
+            5019.354800,
+        ]
+        # Two of them perturbed by a few units of sub-micro-unit
+        # floating-point noise (as Odoo's own upstream tax computation
+        # would produce): individually they still round to the exact
+        # BaseDR shown in that XML, but their raw (unrounded) sum rounds
+        # to one micro-unit more.
+        raw_bases = list(displayed_bases)
+        raw_bases[0] += 0.0000003
+        raw_bases[5] += 0.0000003
+
+        expected_base_dr = [round(base, 6) for base in displayed_bases]
+        self.assertEqual(expected_base_dr, displayed_bases)
+        self.assertEqual(
+            sum(expected_base_dr),
+            113352.470195,
+            "sanity check: this is the BaseP the SAT rule CRP20268 expects.",
+        )
+
+        cfdi_values = {
+            "company": company,
+            "tipo_cambio": 1.0,
+            "docto_relationado_list": [
+                {
+                    "equivalencia": 1.0,
+                    "retenciones_list": [],
+                    "local_retenciones_list": [],
+                    "local_traslados_list": [],
+                    "traslados_list": [{
+                        "impuesto": "002",
+                        "tipo_factor": "Tasa",
+                        "tasa_o_cuota": 0.0,
+                        "base": base,
+                        "importe": 0.0,
+                    }],
+                }
+                for base in raw_bases
+            ],
+        }
+
+        self.env["account.move"].new()._mx_edi_payment_tax_fix_recompute_totals(cfdi_values)
+
+        traslado_p = next(
+            tax_values
+            for tax_values in cfdi_values["traslados_list"]
+            if tax_values["impuesto"] == "002"
+        )
+        self.assertAlmostEqual(
+            traslado_p["base"],
+            sum(expected_base_dr),
+            places=6,
+            msg=(
+                "BaseP must equal the sum of the (rounded) BaseDR of every "
+                "related document with the same ImpuestoDR/TasaOCuotaDR "
+                "(SAT rule CRP20268)."
+            ),
+        )
