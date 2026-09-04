@@ -26,14 +26,26 @@ class AccountMove(models.Model):
     reconciled credit notes, tax group by tax group) instead of the
     original amount, and rebuild the aggregated tax totals from that.
 
-    Only invoices that actually have a related credit note go through this
-    recompute; every other invoice is left exactly as Odoo computed it.
-    An earlier version of this fix ran unconditionally for every invoice
-    and rounded 'base'/'importe' down to currency precision (2 decimals)
-    along the way, which silently discarded the 6-decimal precision the
-    SAT requires for TrasladoDR/RetencionDR and caused error #CRP20261
+    Only invoices that actually have a related credit note go through the
+    per-invoice OPEN-amount recompute; every other invoice's own DR
+    breakdown is left exactly as Odoo computed it. An earlier version of
+    this fix ran that recompute unconditionally for every invoice and
+    rounded 'base'/'importe' down to currency precision (2 decimals) along
+    the way, which silently discarded the 6-decimal precision the SAT
+    requires for TrasladoDR/RetencionDR and caused error #CRP20261
     (ImporteDR not matching BaseDR x TasaOCuotaDR within the 0.000001
     tolerance) even for payments with no credit note involved at all.
+
+    Separately, the AGGREGATED totals (TrasladoP/RetencionP) are ALWAYS
+    rebuilt from the (6-decimal-rounded) per-document breakdown, whether or
+    not any invoice has a credit note. Odoo's own native code computes the
+    per-document DR totals and the aggregated P totals via two independent
+    summations (the P totals are summed from raw, unrounded base-line
+    amounts across every invoice, then rounded only once at the end), and
+    those two roundings can disagree by a single micro-unit purely from
+    floating-point noise - with no credit note anywhere in the picture. That
+    is what SAT error #CRP20268 rejects (BaseP must equal the sum of the
+    BaseDR of every related document sharing the same tax/rate).
     """
 
     _inherit = "account.move"
@@ -118,7 +130,6 @@ class AccountMove(models.Model):
             return res
 
         document = self.env["l10n_mx_edi.document"]
-        any_recomputed = False
 
         for invoice_values, doc_values in zip(pay_results["invoice_results"], cfdi_values["docto_relationado_list"]):
             invoice = invoice_values["invoice"]
@@ -139,8 +150,6 @@ class AccountMove(models.Model):
             invoice._l10n_mx_edi_add_open_invoice_cfdi_values(open_inv_cfdi_values)
             if open_inv_cfdi_values.get("errors"):
                 continue
-
-            any_recomputed = True
 
             open_amount_total = open_inv_cfdi_values.get("mx_edi_payment_tax_fix_open_amount_total") or 0.0
             percentage_paid = (
@@ -182,8 +191,19 @@ class AccountMove(models.Model):
                     new_tax_values_list.append(tax_values)
                 doc_values[key] = new_tax_values_list
 
-        if any_recomputed:
-            self._mx_edi_payment_tax_fix_recompute_totals(cfdi_values)
+        # Always rebuild the aggregated totals (TrasladoP/RetencionP) from the
+        # per-document breakdown (TrasladoDR/RetencionDR), credit note or not.
+        # Odoo's own native code computes those two independently: the DR
+        # breakdown is rounded to 6 decimals per invoice, while the P totals
+        # are rounded to 6 decimals from a SEPARATE sum of raw (unrounded)
+        # tax_base_line amounts across every invoice in the payment. Those two
+        # roundings can disagree by a single micro-unit even with no credit
+        # note anywhere involved, which is exactly the mismatch SAT error
+        # #CRP20268 rejects (BaseP must equal the sum of the BaseDR of every
+        # related document sharing the same tax/rate). Recomputing the totals
+        # here from the (already 6-decimal-rounded) per-document values
+        # guarantees they always agree.
+        self._mx_edi_payment_tax_fix_recompute_totals(cfdi_values)
 
         return res
 
@@ -244,14 +264,7 @@ class AccountMove(models.Model):
                         "tasa_o_cuota": tax_values["tasa_o_cuota"],
                         "local_tax_name": tax_values.get("local_tax_name"),
                     })
-                    # Round to 6 decimals (the precision at which BaseDR/
-                    # ImporteDR/RetencionDR are actually rendered) BEFORE
-                    # accumulating: summing the raw, unrounded upstream
-                    # floats and rounding only the total can disagree with
-                    # summing the values as displayed on each related
-                    # document, which is what the SAT compares against
-                    # (error #CRP20268).
-                    result_dict[tax_key]["importe"] += float_round(tax_values["importe"] / inv_rate, 6)
+                    result_dict[tax_key]["importe"] += tax_values["importe"] / inv_rate
 
                     tax_amount_mxn = tax_values["importe"] * to_mxn_rate
                     if tax_values["impuesto"] == "001":
@@ -272,12 +285,8 @@ class AccountMove(models.Model):
                         "tasa_o_cuota": tax_values["tasa_o_cuota"],
                     })
                     tax_amount = tax_values["importe"] or 0.0
-                    # Same rounding-order fix as above (#CRP20268): round
-                    # each related document's base/importe to 6 decimals
-                    # before summing, so the aggregate matches the sum of
-                    # what is actually rendered as BaseDR/ImporteDR.
-                    result_dict[tax_key]["base"] += float_round(tax_values["base"] / inv_rate, 6)
-                    result_dict[tax_key]["importe"] += float_round(tax_amount / inv_rate, 6)
+                    result_dict[tax_key]["base"] += tax_values["base"] / inv_rate
+                    result_dict[tax_key]["importe"] += tax_amount / inv_rate
 
                     base_amount_mxn = tax_values["base"] * to_mxn_rate
                     tax_amount_mxn = tax_amount * to_mxn_rate

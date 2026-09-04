@@ -1,8 +1,12 @@
+from decimal import Decimal
+from unittest.mock import patch
+
 from freezegun import freeze_time
 from lxml import etree
 
 from odoo import Command
 from odoo.addons.l10n_mx_edi.tests.common import TestMxEdiCommon
+from odoo.addons.mx_edi_payment_tax_fix.models.account_move import AccountMove
 from odoo.tests import tagged
 
 PAGO20_NS = {"pago20": "http://www.sat.gob.mx/Pagos20"}
@@ -187,58 +191,25 @@ class TestPaymentTaxProrationFix(TestMxEdiCommon):
             )
 
     def test_payment_totals_base_matches_sum_of_related_documents_bases(self):
-        """ Regression test for SAT error #CRP20268.
-
-        '_mx_edi_payment_tax_fix_recompute_totals' rebuilds each aggregated
-        TrasladoP/RetencionP node by summing the (raw, double-precision)
-        'base' of every DoctoRelacionado sharing the same tax/rate, then
-        rounds that SUM to 6 decimals. But each DoctoRelacionado's own
-        BaseDR is rounded to 6 decimals independently when rendered. Those
-        two roundings can disagree: 17 untouched invoice lines, several
-        carrying a few units of floating-point noise below the 6th decimal
-        (e.g. from Odoo's own upstream tax computation), each round to the
-        *same* BaseDR shown in the XML, but summing the noisy raw floats
-        first crosses a rounding boundary that summing the already-rounded
-        BaseDR values never would - so BaseP came out one micro-unit higher
-        than 'sum(BaseDR)', e.g. in a real production CFDI:
-
-            BaseP="113352.470196" vs sum(BaseDR) == 113352.470195
-
-        which is exactly the mismatch SAT's rule CRP20268 rejects: BaseP
-        must equal the sum of the BaseDR of every related document whose
-        ImpuestoDR/TasaOCuotaDR match this node's ImpuestoP/TasaOCuotaP.
-
-        The fix is to round each DoctoRelacionado's base to 6 decimals
-        BEFORE accumulating it into the aggregate, i.e. sum what will
-        actually be displayed as BaseDR, not the raw upstream floats.
+        """ Unit-level check for SAT error #CRP20268 on the aggregation
+        itself: given the per-document (DR) 'base' values Odoo actually
+        renders (real numbers from BBVA1-PBBVA1202605892-MX-Payment-20.xml,
+        already at the 6-decimal precision the SAT expects for BaseDR),
+        '_mx_edi_payment_tax_fix_recompute_totals' must aggregate the
+        top-level TrasladoP/RetencionP 'base' to exactly their sum - which
+        is what SAT rule CRP20268 checks (BaseP must equal the sum of the
+        BaseDR of every related document sharing the same tax/rate).
         """
         company = self.company_data["company"]
 
-        # The 17 "IVA 0%" bases from the real rejected CFDI
-        # (BBVA1-PBBVA1202605892-MX-Payment-20.xml).
-        displayed_bases = [
+        # The 17 "IVA 0%" BaseDR from the real rejected CFDI.
+        base_dr_values = [
             14103.531687, 8485.161600, 32577.598392, 6241.605200,
             7973.143953, 148.144540, 740.722700, 1933.075269,
             1793.699700, 2774.236770, 8916.020100, 4483.678100,
             2034.408600, 11025.955168, 4942.563760, 159.569856,
             5019.354800,
         ]
-        # Two of them perturbed by a few units of sub-micro-unit
-        # floating-point noise (as Odoo's own upstream tax computation
-        # would produce): individually they still round to the exact
-        # BaseDR shown in that XML, but their raw (unrounded) sum rounds
-        # to one micro-unit more.
-        raw_bases = list(displayed_bases)
-        raw_bases[0] += 0.0000003
-        raw_bases[5] += 0.0000003
-
-        expected_base_dr = [round(base, 6) for base in displayed_bases]
-        self.assertEqual(expected_base_dr, displayed_bases)
-        self.assertEqual(
-            sum(expected_base_dr),
-            113352.470195,
-            "sanity check: this is the BaseP the SAT rule CRP20268 expects.",
-        )
 
         cfdi_values = {
             "company": company,
@@ -257,7 +228,7 @@ class TestPaymentTaxProrationFix(TestMxEdiCommon):
                         "importe": 0.0,
                     }],
                 }
-                for base in raw_bases
+                for base in base_dr_values
             ],
         }
 
@@ -270,11 +241,158 @@ class TestPaymentTaxProrationFix(TestMxEdiCommon):
         )
         self.assertAlmostEqual(
             traslado_p["base"],
-            sum(expected_base_dr),
+            sum(base_dr_values),
             places=6,
             msg=(
-                "BaseP must equal the sum of the (rounded) BaseDR of every "
-                "related document with the same ImpuestoDR/TasaOCuotaDR "
+                "BaseP must equal the sum of the BaseDR of every related "
+                "document with the same ImpuestoDR/TasaOCuotaDR "
                 "(SAT rule CRP20268)."
             ),
         )
+
+    def test_totals_recomputed_even_without_any_credit_note(self):
+        """ Regression test for SAT error #CRP20268 (structural cause).
+
+        Odoo's native '_l10n_mx_edi_add_payment_cfdi_values' computes the
+        per-document DR breakdown and the aggregated P totals via two
+        INDEPENDENT summations: the DR breakdown is rounded to 6 decimals
+        per invoice, while the P totals are summed from raw (unrounded)
+        tax-base-line amounts across every invoice in the payment and
+        rounded only once, at the end. Those two roundings can disagree by
+        a single micro-unit from ordinary floating-point noise, with no
+        credit note anywhere involved - this is what happened with a real
+        17-invoice batch payment (BBVA1-PBBVA1202605892-MX-Payment-20.xml):
+        BaseP="113352.470196" vs the correct sum of BaseDR, 113352.470195,
+        even though not one of those 17 invoices had a credit note.
+
+        An earlier version of this module only rebuilt the P totals when at
+        least one invoice in the payment had a related credit note
+        (`if not invoice._l10n_mx_edi_get_invoice_related_credit_notes():
+        continue` short-circuited the whole batch to Odoo's native,
+        independently-rounded totals otherwise). That gate is exactly why
+        deploying the CRP20268 arithmetic fix above did not resolve the
+        production error: this batch has no credit notes, so the totals
+        recompute never ran. '_mx_edi_payment_tax_fix_recompute_totals'
+        must always run, credit note or not.
+        """
+        with freeze_time("2017-01-07"):
+            invoice = self._create_invoice(
+                invoice_line_ids=[
+                    Command.create({
+                        "product_id": self.product.id,
+                        "price_unit": 1000.0,
+                        "tax_ids": [Command.set(self.tax_16.ids)],
+                    }),
+                ],
+            )
+            with self.with_mocked_pac_sign_success():
+                invoice._l10n_mx_edi_cfdi_invoice_try_send()
+            self.assertFalse(
+                invoice._l10n_mx_edi_get_invoice_related_credit_notes(),
+                "sanity check: this invoice has no credit note.",
+            )
+
+            payment = self._create_payment(invoice, amount=invoice.amount_residual)
+
+            with patch.object(
+                AccountMove,
+                "_mx_edi_payment_tax_fix_recompute_totals",
+                autospec=True,
+                wraps=AccountMove._mx_edi_payment_tax_fix_recompute_totals,
+            ) as recompute_mock:
+                with self.with_mocked_pac_sign_success():
+                    invoice.l10n_mx_edi_cfdi_invoice_try_update_payments()
+
+            payment_document = payment.move_id.l10n_mx_edi_payment_document_ids.sorted()[:1]
+            self.assertEqual(payment_document.state, "payment_sent")
+
+        recompute_mock.assert_called_once()
+
+    def test_payment_complement_no_credit_note_batch_bases_reconcile(self):
+        """ End-to-end reproduction using the real data from the rejected
+        production CFDI (BBVA1-PBBVA1202605892-MX-Payment-20.xml / invoice
+        MT76738, screenshot: MEGAFOL + RADIGROW, both IVA(0%), Total
+        $25,073.39, partially paid $14,103.53 alongside a batch of other,
+        unrelated, fully-paid invoices - none of them has a credit note).
+
+        For every (impuesto, tasa) group across the whole batch, BaseP must
+        equal the sum of the corresponding BaseDR (SAT rule CRP20268).
+        """
+        older_amounts = [
+            5019.354800, 4942.563760, 11025.955168, 2034.408600,
+            4483.678100, 8916.020100, 2774.236770, 1793.699700,
+            1933.075269, 740.722700, 148.144540, 7973.143953,
+            6241.605200, 32577.598392, 8485.161600,
+        ]
+        mt76738_total = 25073.39
+        mt76738_paid = 14103.53
+
+        with freeze_time("2017-01-07"):
+            invoices = self.env["account.move"]
+            for amt in older_amounts:
+                inv = self._create_invoice(
+                    invoice_date="2017-01-01",
+                    date="2017-01-01",
+                    invoice_line_ids=[
+                        Command.create({
+                            "product_id": self.product.id,
+                            "price_unit": amt,
+                            "tax_ids": [Command.set(self.tax_0.ids)],
+                        }),
+                    ],
+                )
+                with self.with_mocked_pac_sign_success():
+                    inv._l10n_mx_edi_cfdi_invoice_try_send()
+                invoices |= inv
+
+            mt76738 = self._create_invoice(
+                invoice_date="2017-01-06",
+                date="2017-01-06",
+                invoice_line_ids=[
+                    Command.create({
+                        "product_id": self.product.id,
+                        "price_unit": 4742.5418,
+                        "quantity": 4,
+                        "tax_ids": [Command.set(self.tax_0.ids)],
+                    }),
+                    Command.create({
+                        "product_id": self.product.id,
+                        "price_unit": 6103.2258,
+                        "tax_ids": [Command.set(self.tax_0.ids)],
+                    }),
+                ],
+            )
+            with self.with_mocked_pac_sign_success():
+                mt76738._l10n_mx_edi_cfdi_invoice_try_send()
+            self.assertAlmostEqual(mt76738.amount_total, mt76738_total, places=2)
+            invoices |= mt76738
+
+            for inv in invoices:
+                self.assertFalse(inv._l10n_mx_edi_get_invoice_related_credit_notes())
+
+            total_amount = sum(older_amounts) + mt76738_paid
+            payment = self._create_payment(invoices, amount=total_amount)
+
+            with self.with_mocked_pac_sign_success():
+                invoices.l10n_mx_edi_cfdi_invoice_try_update_payments()
+
+            payment_document = payment.move_id.l10n_mx_edi_payment_document_ids.sorted()[:1]
+            self.assertEqual(payment_document.state, "payment_sent")
+            tree = etree.fromstring(payment_document.attachment_id.raw)
+
+        dr_groups = {}
+        for dr in tree.findall(".//pago20:TrasladoDR", PAGO20_NS):
+            key = (dr.get("ImpuestoDR"), dr.get("TipoFactorDR"), dr.get("TasaOCuotaDR"))
+            dr_groups.setdefault(key, Decimal("0"))
+            dr_groups[key] += Decimal(dr.get("BaseDR"))
+
+        p_nodes = tree.findall(".//pago20:TrasladoP", PAGO20_NS)
+        self.assertTrue(p_nodes)
+        for p_node in p_nodes:
+            key = (p_node.get("ImpuestoP"), p_node.get("TipoFactorP"), p_node.get("TasaOCuotaP"))
+            self.assertAlmostEqual(
+                float(p_node.get("BaseP")),
+                float(dr_groups[key]),
+                places=6,
+                msg=f"BaseP for {key} does not match the sum of its BaseDR (SAT rule CRP20268).",
+            )
