@@ -54,24 +54,48 @@ class AccountMove(models.Model):
     # Helpers: what part of the invoice is still open (net of credit notes)
     # -------------------------------------------------------------------
 
+    def _l10n_mx_edi_get_invoice_credit_notes_amounts(self):
+        """ Credit notes reconciled against this invoice's receivable/payable
+        line (as opposed to payments), mapped to HOW MUCH of each one was
+        actually applied to this invoice, expressed in this invoice's
+        currency.
+
+        The amount matters: the very same credit note can be spread over
+        several invoices, so only the part reconciled here may be netted out
+        of this invoice's tax breakdown. Netting the credit note's full
+        amount instead (as an earlier version of this module did) shrinks
+        'open_amount_total' too much, which both inflates 'percentage_paid'
+        beyond 1.0 and can drive a tax group's base below zero - the
+        negative 'BaseDR' the SAT rejects with error #CRP20255.
+        """
+        self.ensure_one()
+        pay_rec_lines = self.line_ids.filtered(
+            lambda line: line.account_type in ("asset_receivable", "liability_payable")
+        )
+        credit_notes_amounts = defaultdict(float)
+        # 'field1' is the counterpart's side of the reconciliation, 'field2'
+        # this invoice's side: the amount applied to this invoice is the one
+        # expressed in this invoice's currency (same idiom as
+        # 'account.move._l10n_mx_edi_cfdi_invoice_get_reconciled_payments_values').
+        for field1, field2 in (("credit", "debit"), ("debit", "credit")):
+            for partial in pay_rec_lines[f"matched_{field1}_ids"]:
+                if partial.exchange_move_id:
+                    continue
+                counterpart_move = partial[f"{field1}_move_id"].move_id
+                if counterpart_move._l10n_mx_edi_is_cfdi_payment():
+                    continue
+                if counterpart_move.move_type in ("out_refund", "in_refund"):
+                    credit_notes_amounts[counterpart_move] += abs(partial[f"{field2}_amount_currency"])
+        return credit_notes_amounts
+
     def _l10n_mx_edi_get_invoice_related_credit_notes(self):
         """ Credit notes reconciled against this invoice's receivable/payable
         line (as opposed to payments). Their tax breakdown must be netted
         out of the invoice's own breakdown before prorating a payment. """
         self.ensure_one()
-        pay_rec_lines = self.line_ids.filtered(
-            lambda line: line.account_type in ("asset_receivable", "liability_payable")
-        )
         credit_notes = self.env["account.move"]
-        for field in ("credit", "debit"):
-            for partial in pay_rec_lines[f"matched_{field}_ids"]:
-                if partial.exchange_move_id:
-                    continue
-                counterpart_move = partial[f"{field}_move_id"].move_id
-                if counterpart_move._l10n_mx_edi_is_cfdi_payment():
-                    continue
-                if counterpart_move.move_type in ("out_refund", "in_refund"):
-                    credit_notes |= counterpart_move
+        for credit_note in self._l10n_mx_edi_get_invoice_credit_notes_amounts():
+            credit_notes |= credit_note
         return credit_notes
 
     def _l10n_mx_edi_add_open_invoice_cfdi_values(self, cfdi_values):
@@ -88,14 +112,22 @@ class AccountMove(models.Model):
 
         open_amount_total = self.amount_total
 
-        for credit_note in self._l10n_mx_edi_get_invoice_related_credit_notes():
+        for credit_note, credited_amount in self._l10n_mx_edi_get_invoice_credit_notes_amounts().items():
             cn_values = document._get_company_cfdi_values(credit_note.company_id)
             document._add_certificate_cfdi_values(cn_values)
             credit_note._l10n_mx_edi_add_invoice_cfdi_values(cn_values)
             if cn_values.get("errors"):
                 continue
 
-            open_amount_total -= credit_note.amount_total
+            # Only the part of the credit note actually reconciled with this
+            # invoice cancels taxes here; the rest of it belongs to other
+            # invoices and must not be netted out of this one (#CRP20255).
+            if credit_note.amount_total:
+                credited_ratio = min(credited_amount / credit_note.amount_total, 1.0)
+            else:
+                credited_ratio = 0.0
+
+            open_amount_total -= credited_amount
 
             for key in ("retenciones_list", "traslados_list", "local_traslados_list", "local_retenciones_list"):
                 for cn_tax_values in cn_values.get(key, []):
@@ -113,7 +145,12 @@ class AccountMove(models.Model):
                         continue
                     for tax_key in ("base", "importe"):
                         if match.get(tax_key) is not None and cn_tax_values.get(tax_key) is not None:
-                            match[tax_key] = self.currency_id.round(match[tax_key] - cn_tax_values[tax_key])
+                            # A tax group can never be cancelled by more than what
+                            # the invoice itself carries: clamp at zero so the
+                            # netting can't produce the negative BaseDR the SAT
+                            # rejects with #CRP20255.
+                            netted = match[tax_key] - cn_tax_values[tax_key] * credited_ratio
+                            match[tax_key] = self.currency_id.round(max(netted, 0.0))
 
         cfdi_values["mx_edi_payment_tax_fix_open_amount_total"] = max(open_amount_total, 0.0)
 
@@ -152,9 +189,16 @@ class AccountMove(models.Model):
                 continue
 
             open_amount_total = open_inv_cfdi_values.get("mx_edi_payment_tax_fix_open_amount_total") or 0.0
-            percentage_paid = (
-                abs(invoice_values["reconciled_amount"] / open_amount_total) if open_amount_total else 0.0
-            )
+            if invoice.currency_id.compare_amounts(open_amount_total, 0.0) <= 0:
+                # Nothing left open once the credit notes are netted out: there
+                # is no meaningful percentage to prorate with, so leave Odoo's
+                # own breakdown rather than emitting made up numbers.
+                continue
+
+            # A payment can never cover more than what is open: clamping keeps a
+            # slightly-off 'open_amount_total' from inflating every base beyond
+            # what the invoice actually carries.
+            percentage_paid = min(abs(invoice_values["reconciled_amount"] / open_amount_total), 1.0)
 
             for key in ("retenciones_list", "traslados_list", "local_traslados_list", "local_retenciones_list"):
                 new_tax_values_list = []
@@ -167,15 +211,15 @@ class AccountMove(models.Model):
                             tax_values[tax_key] = float_round(tax_values[tax_key] * percentage_paid, precision_digits=6)
 
                     # A tax fully cancelled by a credit note nets down to a zero base
-                    # (Traslado/Retencion) here. The SAT schema requires BaseDR/ImporteDR
-                    # to be strictly greater than zero (see error #CRP20255), so such a
-                    # tax must be dropped from this payment's breakdown entirely rather
-                    # than reported as a zero-valued node.
+                    # (Traslado/Retencion) here. The SAT requires BaseDR/ImporteDR to
+                    # be strictly greater than zero (error #CRP20255), so such a tax
+                    # must be dropped from this payment's breakdown entirely rather
+                    # than reported as a zero-valued - or, worse, negative - node.
                     base = tax_values.get("base")
                     importe = tax_values.get("importe")
-                    if base is not None and invoice.currency_id.is_zero(base):
+                    if base is not None and invoice.currency_id.compare_amounts(base, 0.0) <= 0:
                         continue
-                    if base is None and importe is not None and invoice.currency_id.is_zero(importe):
+                    if base is None and importe is not None and invoice.currency_id.compare_amounts(importe, 0.0) <= 0:
                         continue
 
                     if all(tax_values.get(k) is not None for k in ("base", "importe", "tasa_o_cuota")):
@@ -336,14 +380,16 @@ class AccountMove(models.Model):
             ("local_retenciones_list", local_retenciones_values_map),
             ("local_traslados_list", local_traslados_values_map),
         ):
-            # Same SAT constraint as above (#CRP20255): never emit a node whose
-            # base (or, lacking a base, importe) rounds down to zero once
-            # aggregated across all the payment's related documents.
-            cfdi_values[target_key] = [
-                {**k, **v}
-                for k, v in source_dict.items()
-                if not company_curr.is_zero(v.get("base", v["importe"]))
-            ]
+            # Every key in these maps comes from a node that IS present in some
+            # related document, so each one must get its aggregated counterpart:
+            # dropping a group here while its TrasladoDR/RetencionDR still exists
+            # is exactly the BaseP-vs-sum(BaseDR) mismatch of #CRP20268. A group
+            # whose aggregated base rounds down to zero keeps the same 0.000001
+            # floor Odoo itself applies, so the node stays valid for #CRP20255.
+            for values in source_dict.values():
+                if "base" in values:
+                    values["base"] = values["base"] or 0.000001
+            cfdi_values[target_key] = [{**k, **v} for k, v in source_dict.items()]
 
         # Cleanup attributes for Exento taxes.
         for key in ("traslados_list", "local_traslados_list"):

@@ -308,6 +308,141 @@ class TestPaymentTaxProrationFix(TestMxEdiCommon):
 
         recompute_mock.assert_called_once()
 
+    def test_credit_note_split_over_several_invoices_never_goes_negative(self):
+        """ Regression test for SAT error #CRP20255.
+
+        Reproduces the rejected production CFDI
+        BBVA1-PBBVA1202605893-MX-Payment-20.xml, whose related document
+        carried:
+
+            TrasladoDR BaseDR="-2971.890000" ImpuestoDR="003" TipoFactorDR="Exento"
+            TrasladoDR BaseDR="43121.360000" ImpuestoDR="002" TasaOCuotaDR="0.000000"
+
+        with ImpPagado="19437.15" - a NEGATIVE base (which SAT rejects: "El
+        valor del campo BaseDR ... debe ser mayor que cero"), and a base 2.2x
+        larger than the amount actually paid.
+
+        Both symptoms come from the same cause: this module netted out each
+        credit note's FULL tax breakdown and FULL amount_total, even when
+        only part of that credit note was reconciled against this invoice
+        (the rest belonging to other invoices). Over-subtracting drives the
+        exempt group's base below zero AND shrinks 'open_amount_total', which
+        pushes 'percentage_paid' above 1.0 and inflates every base.
+
+        Here a 3,000 credit note is split 2,000 / 1,000 over two invoices, so
+        only a third of it may be netted out of the invoice being paid.
+        """
+        with freeze_time("2017-01-07"):
+            # The invoice being paid: 5,000 at IVA 0% + 1,000 exempt.
+            invoice = self._create_invoice(
+                invoice_line_ids=[
+                    Command.create({
+                        "product_id": self.product.id,
+                        "price_unit": 5000.0,
+                        "tax_ids": [Command.set(self.tax_0.ids)],
+                    }),
+                    Command.create({
+                        "product_id": self.product.id,
+                        "price_unit": 1000.0,
+                        "tax_ids": [Command.set(self.tax_0_exento.ids)],
+                    }),
+                ],
+            )
+            with self.with_mocked_pac_sign_success():
+                invoice._l10n_mx_edi_cfdi_invoice_try_send()
+            self.assertAlmostEqual(invoice.amount_total, 6000.0, places=2)
+
+            # Another invoice the same credit note is also applied to.
+            other_invoice = self._create_invoice(
+                invoice_line_ids=[
+                    Command.create({
+                        "product_id": self.product.id,
+                        "price_unit": 2000.0,
+                        "tax_ids": [Command.set(self.tax_0_exento.ids)],
+                    }),
+                ],
+            )
+
+            # One 3,000 exempt credit note for both invoices: its exempt base
+            # (3,000) is three times the exempt base of the invoice being paid.
+            credit_note = self.env["account.move"].create({
+                "move_type": "out_refund",
+                "partner_id": invoice.partner_id.id,
+                "invoice_date": invoice.invoice_date,
+                "date": invoice.date,
+                "l10n_mx_edi_payment_method_id": invoice.l10n_mx_edi_payment_method_id.id,
+                "currency_id": invoice.currency_id.id,
+                "invoice_line_ids": [
+                    Command.create({
+                        "product_id": self.product.id,
+                        "price_unit": 3000.0,
+                        "tax_ids": [Command.set(self.tax_0_exento.ids)],
+                    }),
+                ],
+            })
+            credit_note.action_post()
+            with self.with_mocked_pac_sign_success():
+                credit_note._l10n_mx_edi_cfdi_invoice_try_send()
+
+            # Apply 2,000 of the credit note to the other invoice first, so
+            # only the remaining 1,000 lands on the invoice being paid.
+            def receivable_lines(*moves):
+                lines = self.env["account.move.line"]
+                for move in moves:
+                    lines |= move.line_ids.filtered(lambda x: x.account_type == "asset_receivable")
+                return lines
+
+            receivable_lines(other_invoice, credit_note).reconcile()
+            receivable_lines(invoice, credit_note).reconcile()
+
+            self.assertAlmostEqual(
+                invoice._l10n_mx_edi_get_invoice_credit_notes_amounts()[credit_note],
+                1000.0,
+                places=2,
+                msg="only 1,000 of the 3,000 credit note was applied to this invoice.",
+            )
+            # 6,000 invoice - 1,000 of credit note actually applied here.
+            self.assertAlmostEqual(invoice.amount_residual, 5000.0, places=2)
+
+            payment = self._create_payment(invoice, amount=invoice.amount_residual)
+            with self.with_mocked_pac_sign_success():
+                invoice.l10n_mx_edi_cfdi_invoice_try_update_payments()
+
+            payment_document = payment.move_id.l10n_mx_edi_payment_document_ids.sorted()[:1]
+            self.assertEqual(payment_document.state, "payment_sent")
+            tree = etree.fromstring(payment_document.attachment_id.raw)
+
+        # -- No base may ever be zero or negative (#CRP20255). --
+        for node in tree.findall(".//pago20:TrasladoDR", PAGO20_NS):
+            self.assertGreater(
+                float(node.get("BaseDR")),
+                0.0,
+                f"BaseDR must be greater than zero (SAT #CRP20255), got {node.get('BaseDR')} "
+                f"for ImpuestoDR={node.get('ImpuestoDR')} TipoFactorDR={node.get('TipoFactorDR')}.",
+            )
+        for node in tree.findall(".//pago20:TrasladoP", PAGO20_NS):
+            self.assertGreater(float(node.get("BaseP")), 0.0)
+
+        # -- The exempt group was entirely cancelled by the applied part of the
+        #    credit note (1,000 invoice base - 1,000 credited), so it is gone. --
+        self.assertFalse([
+            node
+            for node in tree.findall(".//pago20:TrasladoDR", PAGO20_NS)
+            if node.get("TipoFactorDR") == "Exento"
+        ])
+
+        # -- What remains is the untouched IVA 0% line, not an inflated base. --
+        docto_relacionado = tree.find(".//pago20:DoctoRelacionado", PAGO20_NS)
+        self.assertAlmostEqual(float(docto_relacionado.get("ImpPagado")), 5000.0, places=2)
+        traslado_dr = tree.find(".//pago20:TrasladoDR", PAGO20_NS)
+        self.assertAlmostEqual(
+            float(traslado_dr.get("BaseDR")),
+            5000.0,
+            places=2,
+            msg="the base must match what is actually being paid, not be scaled up by a "
+                "'percentage_paid' above 1.0.",
+        )
+
     def test_payment_complement_no_credit_note_batch_bases_reconcile(self):
         """ End-to-end reproduction using the real data from the rejected
         production CFDI (BBVA1-PBBVA1202605892-MX-Payment-20.xml / invoice
