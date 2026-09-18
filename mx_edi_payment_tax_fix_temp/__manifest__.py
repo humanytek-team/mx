@@ -1,6 +1,6 @@
 {
     "name": "MX EDI Payment Tax Fix (TEMPORAL - quitar al actualizar enterprise en odoo.sh)",
-    "version": "19.0.1.1.0",
+    "version": "1.0.0",
     "category": "Accounting/Localizations",
     "summary": "TEMPORAL: Fix BaseP/ImporteP vs BaseDR/ImporteDR on the CFDI Payment Complement (CRP20268) until odoo.sh's enterprise commit is updated",
     "description": """
