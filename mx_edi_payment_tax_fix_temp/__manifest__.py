@@ -24,6 +24,7 @@ the two always agree by construction, regardless of the upstream code path.
 Once odoo.sh's `enterprise` commit is updated past the fix, this module
 becomes redundant (harmless, but redundant) and should be removed.
 """,
+    "author": "Humanytek",
     "depends": ["l10n_mx_edi"],
     "data": [
         "views/payment20_precision_fix.xml",
