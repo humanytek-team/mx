@@ -1,6 +1,6 @@
 {
     "name": "MX EDI Payment Tax Fix (TEMPORAL - quitar al actualizar enterprise en odoo.sh)",
-    "version": "19.0.1.0.0",
+    "version": "19.0.1.1.0",
     "category": "Accounting/Localizations",
     "summary": "TEMPORAL: Fix BaseP/ImporteP vs BaseDR/ImporteDR on the CFDI Payment Complement (CRP20268) until odoo.sh's enterprise commit is updated",
     "description": """
@@ -25,6 +25,9 @@ Once odoo.sh's `enterprise` commit is updated past the fix, this module
 becomes redundant (harmless, but redundant) and should be removed.
 """,
     "depends": ["l10n_mx_edi"],
+    "data": [
+        "views/payment20_precision_fix.xml",
+    ],
     "installable": True,
     "license": "LGPL-3",
 }
