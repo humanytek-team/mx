@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo xmlns:pago20="http://www.sat.gob.mx/Pagos20">
+    <!--
+        TEMPORAL - ver KNOWN_BUGS.md.
+
+        Independientemente de si el path Python que calcula 'traslados_list'/
+        'retenciones_list' para el nodo ImpuestosP está o no sincronizado con
+        el commit real de 'enterprise' desplegado, la vista de este ambiente
+        ha aparecido más de una vez desincronizada del código (BaseP/ImporteP
+        renderizados con 'format_float(...)' a precisión de moneda por
+        defecto, en vez de 'precision=6'), lo que trunca/redondea el valor ya
+        correcto que arma 'account_move.py' antes de que llegue al XML.
+
+        Esta vista fuerza 'precision=6' en RetencionP/TrasladoP directamente,
+        sin depender de que la vista nativa 'l10n_mx_edi.payment20' esté
+        actualizada. Quitar junto con el resto del módulo.
+    -->
+    <record id="payment20_force_precision6" model="ir.ui.view">
+        <field name="name">l10n_mx_edi.payment20.mx_edi_payment_tax_fix_temp</field>
+        <field name="inherit_id" ref="l10n_mx_edi.payment20"/>
+        <field name="arch" type="xml">
+            <xpath expr="//*[local-name()='RetencionP']" position="replace">
+                <pago20:RetencionP
+                    t-att-ImporteP="format_float(tax_values['importe'], precision=6)"
+                    t-att-ImpuestoP="tax_values['impuesto']"
+                />
+            </xpath>
+            <xpath expr="//*[local-name()='TrasladoP']" position="replace">
+                <pago20:TrasladoP
+                    t-att-BaseP="format_float(tax_values['base'], precision=6)"
+                    t-att-ImporteP="format_float(tax_values['importe'], precision=6)"
+                    t-att-ImpuestoP="tax_values['impuesto']"
+                    t-att-TipoFactorP="tax_values['tipo_factor']"
+                    t-att-TasaOCuotaP="format_float(tax_values['tasa_o_cuota'], precision=6)"
+                />
+            </xpath>
+        </field>
+    </record>
+</odoo>
